@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: camara-placas-backend
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - DAHUA_HOST=${DAHUA_HOST:-192.168.38.200}
+      - DAHUA_PORT=${DAHUA_PORT:-80}
+      - DAHUA_USER=${DAHUA_USER:-admin}
+      - DAHUA_PASSWORD=${DAHUA_PASSWORD:-admin123}
+      - PORT=3001
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: camara-placas-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
