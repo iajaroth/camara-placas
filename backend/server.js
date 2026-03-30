@@ -11,7 +11,10 @@ const app = express();
 const upload = multer({ dest: 'uploads/' });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ extended: true }));
+app.use(express.urlencoded({ extended: true }));
+
+let lastEvents = [];
 
 const CONFIG = {
   host: process.env.DAHUA_HOST || '192.168.38.200',
@@ -53,6 +56,20 @@ async function makeRequest(method, url, data = null) {
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', camera: CONFIG.host });
+});
+
+app.post('/api/push', (req, res) => {
+  console.log('Push recibido:', JSON.stringify(req.body, null, 2));
+  lastEvents.unshift({
+    ...req.body,
+    receivedAt: new Date().toISOString()
+  });
+  lastEvents = lastEvents.slice(0, 100);
+  res.status(200).send('OK');
+});
+
+app.get('/api/push/events', (req, res) => {
+  res.json(lastEvents);
 });
 
 app.get('/api/snapshot', async (req, res) => {
@@ -132,7 +149,7 @@ app.get('/api/event-stream', async (req, res) => {
   const eventSource = axios.CancelToken.source();
   
   try {
-    const url = `${BASE_URL}/cgi-bin/eventManager.cgi?action=attach&channel=0&event=TrafgTraficCarPlate&heartbeat=10`;
+    const url = `${BASE_URL}/cgi-bin/eventManager.cgi?action=attach&channel=0&event=TrafficCarPlate&heartbeat=10`;
     
     const response = await axios({
       method: 'GET',
@@ -144,7 +161,8 @@ app.get('/api/event-stream', async (req, res) => {
 
     response.data.on('data', (chunk) => {
       const text = chunk.toString();
-      if (text.includes('PlateNumber')) {
+      console.log('Evento received:', text.substring(0, 200));
+      if (text.includes('PlateNumber') || text.includes('TrafficCarPlate')) {
         const eventData = parseDahuaEvent(text);
         if (eventData) {
           res.write(`data: ${JSON.stringify(eventData)}\n\n`);
