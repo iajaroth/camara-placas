@@ -20,8 +20,31 @@ services:
   frontend:
     build: ./frontend
     container_name: camara-placas-frontend
+    # Dejamos el 8080 en formato localhost o disponible internamente
+    # pero el acceso primordial será a través de Caddy en los puertos 80/443
     ports:
       - "8080:80"
     depends_on:
       - backend
     restart: unless-stopped
+
+  caddy:
+    image: caddy:alpine
+    container_name: caddy-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - ACME_AGREE=true
+    # Redirige todo el tráfico HTTPS del dominio al contenedor de frontend
+    command: caddy reverse-proxy --from https://mc47.cr-safe.com --to http://frontend:80
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy_data:
+  caddy_config:
