@@ -21,7 +21,6 @@ function getInitialDates() {
   const end = new Date()
   end.setHours(23, 59, 59, 999)
   
-  // Format to YYYY-MM-DDTHH:mm for input[type="datetime-local"]
   const pad = (n) => n.toString().padStart(2, '0')
   const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
   
@@ -29,19 +28,27 @@ function getInitialDates() {
 }
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('auth') === 'true')
+  const [loginUser, setLoginUser] = useState('')
+  const [loginPass, setLoginPass] = useState('')
+  const [loginError, setLoginError] = useState('')
+
   const initDates = getInitialDates()
   
-  const [tab, setTab] = useState('live')
+  const [tab, setTab] = useState('live') // live | records | info
   const [camera, setCamera] = useState({ status: 'connecting' })
   const [snapshot, setSnapshot] = useState(null)
   const [snapshotTs, setSnapshotTs] = useState(null)
+  
   const [events, setEvents] = useState([])
-  const [filter, setFilter] = useState('')
+  
   const [dateStart, setDateStart] = useState(initDates.start)
   const [dateEnd, setDateEnd] = useState(initDates.end)
+  const [recordFilter, setRecordFilter] = useState('')
   
   const [diagResults, setDiagResults] = useState(null)
   const [diagLoading, setDiagLoading] = useState(false)
+  
   const [records, setRecords] = useState([])
   const [recordsLoading, setRecordsLoading] = useState(false)
   const [autoRefresh, setAutoRefresh] = useState(true)
@@ -52,28 +59,50 @@ function App() {
   const eventSourceRef = useRef(null)
   const snapshotInterval = useRef(null)
 
-  // Health check
+  // Login handler
+  const handleLogin = (e) => {
+    e.preventDefault()
+    if (loginUser === 'admin' && loginPass === 'STStec2703') {
+      localStorage.setItem('auth', 'true')
+      setIsAuthenticated(true)
+      setLoginError('')
+    } else {
+      setLoginError('Usuario o contraseña incorrectos')
+    }
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('auth')
+    setIsAuthenticated(false)
+  }
+
+  // Effect to pull data when authenticated
   useEffect(() => {
+    if (!isAuthenticated) return
+
     checkHealth()
     const iv = setInterval(checkHealth, 15000)
-    return () => clearInterval(iv)
-  }, [])
+    
+    // Connect SSE
+    connectSSE()
+    
+    return () => {
+      clearInterval(iv)
+      disconnectSSE()
+    }
+  }, [isAuthenticated])
 
   // Snapshot polling
   useEffect(() => {
+    if (!isAuthenticated) return
+    
     if (tab === 'live' && autoRefresh) {
       fetchSnapshot()
       snapshotInterval.current = setInterval(fetchSnapshot, 3000)
       return () => clearInterval(snapshotInterval.current)
     }
     return () => clearInterval(snapshotInterval.current)
-  }, [tab, autoRefresh])
-
-  // SSE event stream
-  useEffect(() => {
-    connectSSE()
-    return () => disconnectSSE()
-  }, [])
+  }, [tab, autoRefresh, isAuthenticated])
 
   const checkHealth = async () => {
     try {
@@ -111,8 +140,8 @@ function App() {
           setEvents(prev => {
             const exists = prev.find(p => p.id === data.id)
             if (exists) return prev
-            // Limitar a máximo 2000 eventos en memoria para mejor rendimiento
-            return [data, ...prev].slice(0, 2000)
+            // Solo keep the last 50 for the live tab to show "recent" plates
+            return [data, ...prev].slice(0, 50)
           })
         }
       } catch {}
@@ -145,7 +174,6 @@ function App() {
   const searchRecords = async () => {
     setRecordsLoading(true)
     try {
-      // Convert datetime-local format back to standard YYYY-MM-DD HH:mm:ss string for camera
       const startParam = dateStart ? dateStart.replace('T', ' ') + ':00' : ''
       const endParam = dateEnd ? dateEnd.replace('T', ' ') + ':59' : ''
       const q = new URLSearchParams()
@@ -169,7 +197,7 @@ function App() {
     try {
       const url = `${API}/camera-file?path=${encodeURIComponent(filePath)}&t=${Date.now()}`
       const r = await fetch(url)
-      if (!r.ok) throw new Error('No se pudo cargar la imagen')
+      if (!r.ok) throw new Error('No se pudo cargar la imagen de la cámara')
       const blob = await r.blob()
       setPreviewImage(URL.createObjectURL(blob))
     } catch (err) {
@@ -184,9 +212,23 @@ function App() {
       return
     }
     
-    const keys = Object.keys(data[0])
+    // Cleanup fields
+    const copy = data.map(item => {
+      const plate = item.PlateNumber || (item.Events && item.Events.includes('PlateNumber') ? 'Reconocida' : '')
+      return {
+        Placa: plate,
+        FechaHoraInicial: item.StartTime || '',
+        FechaHoraFinal: item.EndTime || '',
+        Canal: item.Channel || '',
+        TipoEvento: item.Type || '',
+        RutaArchivo: item.FilePath || '',
+        MedidaKB: item.FileLength ? Math.round(item.FileLength / 1024) : ''
+      }
+    })
+
+    const keys = Object.keys(copy[0])
     const header = keys.join(',')
-    const lines = data.map(item => 
+    const lines = copy.map(item => 
       keys.map(k => {
         const val = item[k] === null || item[k] === undefined ? '' : String(item[k])
         return `"${val.replace(/"/g, '""')}"`
@@ -206,46 +248,76 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  // Filtrado de eventos locales
-  const filteredEvents = events.filter(evt => {
-    // Texto
-    if (filter && !evt.plateNumber?.toLowerCase().includes(filter.toLowerCase())) {
-      return false
-    }
-    
-    if (!evt.timestamp) return true
-    
-    // Fechas
-    const evtTime = new Date(evt.timestamp).getTime()
-    if (dateStart) {
-      const s = new Date(dateStart).getTime()
-      if (evtTime < s) return false
-    }
-    if (dateEnd) {
-      const e = new Date(dateEnd).getTime()
-      if (evtTime > e) return false
-    }
-    
-    return true
+  // Filtrado de registros obtenidos desde la cámara
+  const filteredRecords = records.filter(rec => {
+    if (!recordFilter) return true
+    const hint = rec.PlateNumber || ''
+    return hint.toLowerCase().includes(recordFilter.toLowerCase())
   })
 
-  const statusClass = camera.status === 'online' ? 'online' : camera.status === 'connecting' ? 'connecting' : 'offline'
-  const statusText = camera.status === 'online' ? 'Cámara Online' : camera.status === 'connecting' ? 'Conectando...' : 'Cámara Offline'
+  // === RENDER LOGIN APP ===
+  if (!isAuthenticated) {
+    return (
+      <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 20 }}>
+        <div className="card" style={{ maxWidth: 400, width: '100%', padding: 40 }}>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <div className="header-logo" style={{ margin: '0 auto 16px auto', width: 64, height: 64, fontSize: 32 }}>📷</div>
+            <div className="header-title" style={{ fontSize: 24 }}>MC47-Main2</div>
+            <div className="header-subtitle">Acceso de Seguridad</div>
+          </div>
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div className="filter-group">
+              <span className="filter-label">Usuario</span>
+              <input 
+                type="text" 
+                className="filter-input" 
+                style={{ width: '100%', boxSizing: 'border-box' }}
+                value={loginUser} 
+                onChange={e => setLoginUser(e.target.value)} 
+                autoFocus 
+              />
+            </div>
+            <div className="filter-group">
+              <span className="filter-label">Contraseña</span>
+              <input 
+                type="password" 
+                className="filter-input" 
+                style={{ width: '100%', boxSizing: 'border-box' }}
+                value={loginPass} 
+                onChange={e => setLoginPass(e.target.value)} 
+              />
+            </div>
+            {loginError && <div style={{ color: 'var(--danger)', fontSize: 13, background: 'var(--danger-bg)', padding: '8px 12px', borderRadius: 6 }}>{loginError}</div>}
+            <button type="submit" className="btn btn-accent" style={{ marginTop: 8, justifyContent: 'center', padding: '12px' }}>
+              Iniciar Sesión
+            </button>
+          </form>
+        </div>
+      </div>
+    )
+  }
 
+  const statusClass = camera.status === 'online' ? 'online' : camera.status === 'connecting' ? 'connecting' : 'offline'
+  const statusText = camera.status === 'online' ? 'Online' : camera.status === 'connecting' ? 'Conectando...' : 'Offline'
+
+  // === RENDER MAIN APP ===
   return (
     <div className="app">
       {/* HEADER */}
-      <header className="header">
+      <header className="header" style={{ marginBottom: 16 }}>
         <div className="header-left">
           <div className="header-logo">📷</div>
           <div>
-            <div className="header-title">CámaraPlacas</div>
-            <div className="header-subtitle">Dahua ITC413 • {camera.camera || '192.168.38.200'}</div>
+            <div className="header-title">MC47-Main2</div>
+            <div className="header-subtitle">Cámara LPR • {camera.camera || '192.168.38.200'}</div>
           </div>
         </div>
-        <div className={`status-badge ${statusClass}`}>
-          <span className="status-dot"></span>
-          {statusText}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div className={`status-badge ${statusClass}`}>
+            <span className="status-dot"></span>
+            {statusText}
+          </div>
+          <button className="btn" onClick={handleLogout} style={{ padding: '6px 10px', fontSize: 11 }}>Salir</button>
         </div>
       </header>
 
@@ -254,12 +326,8 @@ function App() {
         <button className={`tab ${tab === 'live' ? 'active' : ''}`} onClick={() => setTab('live')}>
           📹 En Vivo
         </button>
-        <button className={`tab ${tab === 'events' ? 'active' : ''}`} onClick={() => setTab('events')}>
-          🚗 Placas
-          {events.length > 0 && <span className="tab-badge">{events.length}</span>}
-        </button>
         <button className={`tab ${tab === 'records' ? 'active' : ''}`} onClick={() => setTab('records')}>
-          📁 Registros
+          🔍 Buscar Placas
         </button>
         <button className={`tab ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}>
           ⚙️ Diagnóstico
@@ -276,7 +344,6 @@ function App() {
                 <button className="btn" onClick={() => setAutoRefresh(!autoRefresh)}>
                   {autoRefresh ? '⏸ Pausar' : '▶ Reanudar'}
                 </button>
-                <button className="btn btn-accent" onClick={fetchSnapshot}>📸 Capturar</button>
               </div>
             </div>
             <div className="video-container">
@@ -297,11 +364,11 @@ function App() {
 
           <div className="card">
             <div className="card-header">
-              <span className="card-title">🚗 Últimas Detecciones</span>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{events.length} total</span>
+              <span className="card-title">🚗 Placas Recientes</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Muestra memoria rápida en vivo</span>
             </div>
             <div className="records-list">
-              {events.slice(0, 15).map((evt) => (
+              {events.map((evt) => (
                 <div key={evt.id} className="record-item new-event">
                   <div className="record-left">
                     <div className="record-icon">🚗</div>
@@ -309,8 +376,6 @@ function App() {
                       <div className="plate-number">{evt.plateNumber}</div>
                       <div className="record-meta">
                         {evt.plateColor !== 'Unknown' && `Color: ${evt.plateColor}`}
-                        {evt.lane > 0 && ` • Carril: ${evt.lane}`}
-                        {evt.speed > 0 && ` • ${evt.speed} km/h`}
                       </div>
                     </div>
                   </div>
@@ -321,105 +386,31 @@ function App() {
                 </div>
               ))}
               {events.length === 0 && (
-                <div className="empty-state">
-                  <div className="empty-state-icon">🔍</div>
-                  <div className="empty-state-text">Esperando detecciones de placas...</div>
-                </div>
+                 <div className="empty-state">
+                   <div className="empty-state-icon">📡</div>
+                   <div className="empty-state-text">Esperando detecciones de placas en tiempo real...</div>
+                 </div>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* EVENTS / PLATES TAB */}
-      {tab === 'events' && (
-        <div className="card">
-          <div className="filter-bar">
-            <div className="filter-row">
-              <div className="filter-group">
-                <span className="filter-label">Buscar Placa</span>
-                <input
-                  type="text"
-                  className="filter-input"
-                  placeholder="ABC-123"
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                />
-              </div>
-              <div className="filter-group">
-                <span className="filter-label">Desde</span>
-                <input
-                  type="datetime-local"
-                  className="filter-input"
-                  value={dateStart}
-                  onChange={(e) => setDateStart(e.target.value)}
-                />
-              </div>
-              <div className="filter-group">
-                <span className="filter-label">Hasta</span>
-                <input
-                  type="datetime-local"
-                  className="filter-input"
-                  value={dateEnd}
-                  onChange={(e) => setDateEnd(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="filter-row" style={{ marginTop: '8px', justifyContent: 'space-between' }}>
-              <button className="btn btn-danger" onClick={() => { setFilter(''); setEvents([]); }}>🗑️ Limpiar Memoria</button>
-              <button className="btn btn-accent" onClick={() => exportCSV(filteredEvents, 'placas_memoria')}>
-                ⬇️ Descargar CSV
-              </button>
-            </div>
-          </div>
-          
-          <div className="stats-bar">
-            <div className="stat-item">Total Memoria: <span className="stat-value">{events.length}</span></div>
-            <div className="stat-item">Filtradas: <span className="stat-value">{filteredEvents.length}</span></div>
-            <div className="stat-item" style={{marginLeft: 'auto', fontSize: '11px', color: 'var(--warning)'}}>
-              * Registro temporal (se pierde al reiniciar el backend)
-            </div>
-          </div>
-          
-          <div className="events-container">
-            {filteredEvents.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-state-icon">{filter ? '🔍' : '📡'}</div>
-                <div className="empty-state-text">
-                  {filter ? 'No se encontraron placas con ese filtro' : 'Esperando eventos de la cámara...'}
-                </div>
-              </div>
-            ) : (
-              filteredEvents.map((evt) => (
-                <div key={evt.id} className="record-item new-event">
-                  <div className="record-left">
-                    <div className="record-icon">🚗</div>
-                    <div>
-                      <div className="plate-number">{evt.plateNumber}</div>
-                      <div className="record-meta">
-                        {evt.plateColor !== 'Unknown' && `Placa: ${evt.plateColor}`}
-                        {evt.vehicleColor && ` • Vehículo: ${evt.vehicleColor}`}
-                        {evt.lane > 0 && ` • Carril: ${evt.lane}`}
-                        {evt.speed > 0 && ` • ${evt.speed} km/h`}
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="record-time">{formatTime(evt.timestamp)}</div>
-                    <div className="record-date">{formatDate(evt.timestamp)}</div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* RECORDS TAB */}
+      {/* RECORDS TAB: NOW "BUSCAR PLACAS" */}
       {tab === 'records' && (
         <div className="card">
           <div className="filter-bar">
             <div className="filter-row">
+              <div className="filter-group" style={{ flex: '1.5' }}>
+                <span className="filter-label">Filtro de Placa</span>
+                <input
+                  type="text"
+                  className="filter-input"
+                  placeholder="Ejem: AAA111 (aplica tras buscar)"
+                  value={recordFilter}
+                  onChange={(e) => setRecordFilter(e.target.value)}
+                />
+              </div>
               <div className="filter-group">
                 <span className="filter-label">Desde</span>
                 <input
@@ -439,50 +430,48 @@ function App() {
                 />
               </div>
             </div>
-            <div className="filter-row" style={{ marginTop: '8px', justifyContent: 'space-between' }}>
+            <div className="filter-row" style={{ marginTop: '12px', justifyContent: 'space-between' }}>
               <button className="btn btn-accent" onClick={searchRecords} disabled={recordsLoading}>
-                {recordsLoading ? '⏳ Buscando en SD...' : '🔍 Buscar Grabaciones'}
+                {recordsLoading ? '⏳ Consultando sistema...' : '🔍 Buscar'}
               </button>
               <button 
                 className="btn btn-accent" 
-                onClick={() => exportCSV(records, 'registros_camara')} 
-                disabled={records.length === 0}
-                style={{ background: records.length ? '' : 'var(--bg-input)' }}
+                onClick={() => exportCSV(filteredRecords, 'registros_camara')} 
+                disabled={filteredRecords.length === 0}
+                style={{ background: filteredRecords.length ? '' : 'var(--bg-input)' }}
               >
-                ⬇️ Descargar CSV
+                ⬇️ Descargar Resultados CSV
               </button>
             </div>
           </div>
           
           <div className="stats-bar">
-            <div className="stat-item">Resultados: <span className="stat-value">{records.length}</span></div>
+            <div className="stat-item">Resultados: <span className="stat-value">{filteredRecords.length}</span></div>
             <div className="stat-item" style={{marginLeft: 'auto', fontSize: '11px'}}>
-              * Busca directamente en la memoria SD de la cámara
+              Extraído directamente del almacenamiento interno
             </div>
           </div>
           
           {recordsLoading ? (
-            <div className="empty-state"><div className="spinner"></div><p style={{marginTop: 12}}>Buscando en la cámara...</p></div>
-          ) : records.length > 0 ? (
+            <div className="empty-state"><div className="spinner"></div><p style={{marginTop: 12}}>Analizando memoria interna de cámara...</p></div>
+          ) : filteredRecords.length > 0 ? (
             <div className="events-container">
-              {records.map((rec, i) => {
-                // El número de placa a menudo está en Event o PlateNumber si es ANPR
-                const hint = rec.PlateNumber || (rec.Events && rec.Events.includes('PlateNumber') ? 'Placa' : 'Registro')
+              {filteredRecords.map((rec, i) => {
+                const placaText = rec.PlateNumber || 'Desconocida'
                 return (
                   <div key={i} className="record-item">
                     <div className="record-left">
                       <div className="record-icon">📄</div>
                       <div>
-                        <div className="plate-number" style={{ fontSize: 13 }}>{hint} {i+1}</div>
+                        {/* We use PlateNumber extraction from backend */}
+                        <div className="plate-number" style={{ fontSize: 16 }}>{placaText}</div>
                         <div className="record-meta" style={{ fontFamily: 'JetBrains Mono', fontSize: '10px' }}>
-                          {rec.FilePath ? rec.FilePath.substring(rec.FilePath.lastIndexOf('/') + 1) : 'Archivo local'}
-                          <br/>
-                          Size: {rec.FileLength ? Math.round(rec.FileLength / 1024) + ' KB' : 'N/A'}
+                          Archivo: {rec.FilePath ? rec.FilePath.substring(rec.FilePath.lastIndexOf('/') + 1) : 'Local'}
                         </div>
                         {rec.FilePath && (
                            <button 
                              className="btn btn-accent" 
-                             style={{ padding: '2px 8px', fontSize: '10px', marginTop: '6px' }}
+                             style={{ padding: '4px 10px', fontSize: '11px', marginTop: '8px' }}
                              onClick={() => viewFile(rec.FilePath)}
                            >
                              👁️ Vista Previa
@@ -491,8 +480,8 @@ function App() {
                       </div>
                     </div>
                     <div>
-                      <div className="record-time">{rec.StartTime || ''}</div>
-                      <div className="record-date">{rec.EndTime || ''}</div>
+                      <div className="record-time">{rec.StartTime?.split(' ')[1] || ''}</div>
+                      <div className="record-date">{rec.StartTime?.split(' ')[0] || ''}</div>
                     </div>
                   </div>
                 )
@@ -501,7 +490,7 @@ function App() {
           ) : (
             <div className="empty-state">
               <div className="empty-state-icon">📁</div>
-              <div className="empty-state-text">Presiona "Buscar Grabaciones" para consultar la memoria SD de la cámara en el rango seleccionado</div>
+              <div className="empty-state-text">Presiona "Buscar" para descargar el resumen de placas guardado en la última fecha seleccionada.</div>
             </div>
           )}
         </div>
@@ -518,9 +507,7 @@ function App() {
           </div>
 
           <div className="stats-bar">
-            <div className="stat-item">Cámara: <span className="stat-value">{camera.camera || '—'}</span></div>
-            <div className="stat-item">Estado: <span className="stat-value">{camera.status}</span></div>
-            <div className="stat-item">Dispositivo: <span className="stat-value">{camera.device || '—'}</span></div>
+            <div className="stat-item">Dispositivo: <span className="stat-value">{camera.device || 'MC47-Main2'}</span></div>
           </div>
 
           {camera.error && (
@@ -530,7 +517,7 @@ function App() {
           )}
 
           {diagLoading && (
-            <div className="empty-state"><div className="spinner"></div><p>Probando endpoints de la cámara...</p></div>
+            <div className="empty-state"><div className="spinner"></div><p>Probando endpoints de cámara...</p></div>
           )}
 
           {diagResults?.results && (
@@ -567,9 +554,9 @@ function App() {
               <img src={previewImage} alt="Preview de cámara" className="modal-image" />
             </div>
             <div className="modal-header" style={{ borderTop: '1px solid var(--border)', borderBottom: 'none' }}>
-              <span className="record-meta">Archivo temporal descargado de la memoria SD</span>
-              <a href={previewImage} download={`imagen_camara_${new Date().getTime()}.jpg`} className="btn btn-accent">
-                ⬇️ Descargar Imagen
+              <span className="record-meta">Archivo temporal descargado</span>
+              <a href={previewImage} download={`imagen_placa_${new Date().getTime()}.jpg`} className="btn btn-accent">
+                ⬇️ Descargar
               </a>
             </div>
           </div>

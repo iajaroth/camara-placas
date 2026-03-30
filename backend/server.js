@@ -192,8 +192,14 @@ app.get('/api/records', async (req, res) => {
 // Proxy camera file/image
 app.get('/api/camera-file', async (req, res) => {
   try {
-    const filePath = req.query.path;
+    let filePath = req.query.path;
     if (!filePath) return res.status(400).json({ error: 'path required' });
+    
+    // Convert path to proper Dahua download URI if it's an absolute path
+    if (filePath.startsWith('/') && !filePath.includes('cgi-bin')) {
+      filePath = `/cgi-bin/loadfile.cgi?action=download&file=${encodeURIComponent(filePath)}`;
+    }
+    
     const resp = await cam(filePath);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const ct = resp.headers.get('content-type');
@@ -242,7 +248,31 @@ function parseFileResults(text) {
   const records = [];
   for (const line of text.split('\n')) {
     const m = line.trim().match(/^items\[(\d+)\]\.(\w+)=(.*)$/);
-    if (m) { const i = parseInt(m[1]); while (records.length <= i) records.push({}); records[i][m[2]] = m[3]; }
+    if (m) { 
+      const i = parseInt(m[1]); 
+      while (records.length <= i) records.push({}); 
+      records[i][m[2]] = m[3]; 
+    }
+    // Deep properties mapping (e.g. items[0].Events[0].TrafficCar.PlateNumber)
+    const deepMatch = line.trim().match(/^items\[(\d+)\].*?\.(\w+)=(.*)$/);
+    if (deepMatch && !m) {
+       const i = parseInt(deepMatch[1]);
+       while (records.length <= i) records.push({});
+       if (!records[i][deepMatch[2]]) records[i][deepMatch[2]] = deepMatch[3];
+    }
+  }
+  
+  // Post-process to extract PlateNumber from FilePath if missing
+  for (const r of records) {
+    if (!r.PlateNumber && r.FilePath) {
+      // Examples: .../12_34_56_ABC123_TrafficJunction.jpg or ...[ABC123]...
+      const fileBase = r.FilePath.split('/').pop() || '';
+      // Regex to try to find 5+ alphanumeric uppercase consecutive characters that look like plates
+      const plateMatch = fileBase.match(/_([A-Z0-9]{5,8})_/i) || fileBase.match(/\[([A-Z0-9]{5,8})\]/i);
+      if (plateMatch) {
+         r.PlateNumber = plateMatch[1];
+      }
+    }
   }
   return records;
 }
