@@ -564,11 +564,126 @@ body {
 
 /* ===== Responsive ===== */
 @media (max-width: 768px) {
-  .app { padding: 12px; }
-  .header { flex-direction: column; gap: 12px; padding: 14px 16px; }
-  .tabs { overflow-x: auto; }
-  .tab { white-space: nowrap; padding: 10px 12px; font-size: 13px; }
+  .app { padding: 12px; padding-bottom: 80px; }
+  .header { flex-direction: column; gap: 12px; padding: 14px 16px; margin-bottom: 16px; }
   .grid { grid-template-columns: 1fr; }
   .filter-bar { flex-direction: column; }
   .plate-number { font-size: 16px; }
+  .stats-bar { flex-direction: column; gap: 8px; }
+  
+  /* Mobile Bottom Navigation */
+  .tabs {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    margin: 0;
+    border-radius: 0;
+    border-top: 1px solid var(--border);
+    background: rgba(13, 17, 23, 0.95);
+    backdrop-filter: blur(12px);
+    z-index: 100;
+    padding: 8px 12px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    display: flex;
+    gap: 4px;
+    justify-content: space-around;
+  }
+  
+  .tab {
+    flex-direction: column;
+    padding: 8px 4px;
+    font-size: 11px;
+    gap: 4px;
+    border-radius: var(--radius-sm);
+  }
+  
+  .tab .tab-badge {
+    position: absolute;
+    top: 4px;
+    right: 50%;
+    transform: translateX(20px);
+  }
+}
+
+/* ===== Form Controls ===== */
+.filter-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 150px;
+}
+
+.filter-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ===== Modal / Image Preview ===== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: fade-in 0.2s ease-out;
+}
+
+.modal-content {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.modal-body {
+  padding: 0;
+  background: #000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  min-height: 200px;
+  min-width: 300px;
+}
+
+.modal-image {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
