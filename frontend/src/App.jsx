@@ -254,7 +254,15 @@ function App() {
   }
 
   const downloadSelectedImages = async () => {
-    const paths = selectedRecords.map(i => filteredRecords[i]?.FilePath).filter(Boolean)
+    let paths = []
+    selectedRecords.forEach(i => {
+      const rec = filteredRecords[i]
+      if (rec) {
+         if (rec.FilePaths && rec.FilePaths.length > 0) paths.push(...rec.FilePaths)
+         else if (rec.FilePath) paths.push(rec.FilePath)
+      }
+    })
+    
     if (!paths.length) return alert('No hay rutas válidas o imágenes en los registros seleccionados.')
     
     setDownloadingZip(true)
@@ -536,17 +544,30 @@ function App() {
                         {/* We use PlateNumber extraction from backend */}
                         <div className="plate-number" style={{ fontSize: 16 }}>{placaText}</div>
                         <div className="record-meta" style={{ fontFamily: 'JetBrains Mono', fontSize: '10px' }}>
-                          Archivo: {rec.FilePath ? rec.FilePath.substring(rec.FilePath.lastIndexOf('/') + 1) : 'Local'}
+                          Archivos: {rec.FilePaths ? rec.FilePaths.length : (rec.FilePath ? 1 : 0)}
                         </div>
-                        {rec.FilePath && (
-                           <button 
-                             className="btn btn-accent" 
-                             style={{ padding: '4px 10px', fontSize: '11px', marginTop: '8px' }}
-                             onClick={(e) => { e.stopPropagation(); viewFile(rec.FilePath); }}
-                           >
-                             👁️ Vista Previa
-                           </button>
-                        )}
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
+                          {rec.FilePaths && rec.FilePaths.length > 0 ? (
+                            rec.FilePaths.map((fp, idx) => (
+                              <button 
+                                key={idx}
+                                className="btn btn-accent" 
+                                style={{ padding: '4px 10px', fontSize: '11px' }}
+                                onClick={(e) => { e.stopPropagation(); viewFile(fp); }}
+                              >
+                                👁️ {idx === 0 ? 'Vehículo' : idx === 1 ? 'Placa' : `Foto ${idx+1}`}
+                              </button>
+                            ))
+                          ) : rec.FilePath ? (
+                            <button 
+                              className="btn btn-accent" 
+                              style={{ padding: '4px 10px', fontSize: '11px' }}
+                              onClick={(e) => { e.stopPropagation(); viewFile(rec.FilePath); }}
+                            >
+                              👁️ Vista Previa
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                     <div>

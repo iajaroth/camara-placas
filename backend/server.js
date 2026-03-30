@@ -311,30 +311,51 @@ function extractField(text, field) {
 function parseFileResults(text) {
   const records = [];
   for (const line of text.split('\n')) {
-    const m = line.trim().match(/^items\[(\d+)\]\.(\w+)=(.*)$/);
-    if (m) { 
-      const i = parseInt(m[1]); 
-      while (records.length <= i) records.push({}); 
-      records[i][m[2]] = m[3]; 
-    }
-    // Deep properties mapping (e.g. items[0].Events[0].TrafficCar.PlateNumber)
-    const deepMatch = line.trim().match(/^items\[(\d+)\].*?\.(\w+)=(.*)$/);
-    if (deepMatch && !m) {
-       const i = parseInt(deepMatch[1]);
+    const m = line.trim().match(/^items\[(\d+)\]\.(.+?)=(.*)$/);
+    if (m) {
+       const i = parseInt(m[1]); 
+       const keyPath = m[2];
+       const val = m[3].trim();
        while (records.length <= i) records.push({});
-       if (!records[i][deepMatch[2]]) records[i][deepMatch[2]] = deepMatch[3];
+       
+       if (!records[i].FilePaths) records[i].FilePaths = [];
+       
+       // Capture ANY file path (e.g. FilePath, PlateFilePath, or value ending in .jpg)
+       if (keyPath.endsWith('FilePath') || val.toLowerCase().endsWith('.jpg') || val.toLowerCase().endsWith('.png')) {
+           if (!records[i].FilePaths.includes(val)) {
+               records[i].FilePaths.push(val);
+           }
+       }
+       
+       // Try to set root properties for quick access
+       if (!keyPath.includes('.')) {
+           // items[0].PlateNumber
+           records[i][keyPath] = val;
+       } else {
+           // items[0].Detail.PlateNumber => extract PlateNumber
+           const lastKey = keyPath.split('.').pop();
+           if (!records[i][lastKey]) {
+               records[i][lastKey] = val;
+           }
+       }
     }
   }
   
-  // Post-process to extract PlateNumber from FilePath if missing
+  // Post-process
   for (const r of records) {
-    if (!r.PlateNumber && r.FilePath) {
-      // Examples: .../12_34_56_ABC123_TrafficJunction.jpg or ...[ABC123]...
-      const fileBase = r.FilePath.split('/').pop() || '';
-      // Regex to try to find 5+ alphanumeric uppercase consecutive characters that look like plates
-      const plateMatch = fileBase.match(/_([A-Z0-9]{5,8})_/i) || fileBase.match(/\[([A-Z0-9]{5,8})\]/i);
-      if (plateMatch) {
-         r.PlateNumber = plateMatch[1];
+    // If we have an array of filepaths but missing a single standard FilePath property, set it
+    if (!r.FilePath && r.FilePaths && r.FilePaths.length > 0) {
+      r.FilePath = r.FilePaths[0];
+    }
+    // Fallback Plate extraction from filenames
+    if (!r.PlateNumber && r.FilePaths && r.FilePaths.length > 0) {
+      for (const fp of r.FilePaths) {
+        const fileBase = fp.split('/').pop() || '';
+        const plateMatch = fileBase.match(/_([A-Z0-9]{5,8})_/i) || fileBase.match(/\[([A-Z0-9]{5,8})\]/i);
+        if (plateMatch) {
+           r.PlateNumber = plateMatch[1];
+           break;
+        }
       }
     }
   }
