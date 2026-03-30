@@ -56,6 +56,9 @@ function App() {
   const [previewImage, setPreviewImage] = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   
+  const [selectedRecords, setSelectedRecords] = useState([])
+  const [downloadingZip, setDownloadingZip] = useState(false)
+  
   const eventSourceRef = useRef(null)
   const snapshotInterval = useRef(null)
 
@@ -183,9 +186,11 @@ function App() {
       const r = await fetch(`${API}/records?${q.toString()}`)
       const data = await r.json()
       setRecords(data.records || [])
+      setSelectedRecords([]) // Reset selection on new search
     } catch (err) {
       console.error('Records:', err)
       setRecords([])
+      setSelectedRecords([])
     }
     setRecordsLoading(false)
   }
@@ -246,6 +251,46 @@ function App() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+  }
+
+  const downloadSelectedImages = async () => {
+    const paths = selectedRecords.map(i => filteredRecords[i]?.FilePath).filter(Boolean)
+    if (!paths.length) return alert('No hay rutas válidas o imágenes en los registros seleccionados.')
+    
+    setDownloadingZip(true)
+    try {
+      const resp = await fetch(`${API}/download-images`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths })
+      })
+      if (!resp.ok) throw new Error('Falló la creación del ZIP en el servidor')
+      
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `placas_fotos_${Date.now()}.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      alert('Error descargando el ZIP: ' + err.message)
+    }
+    setDownloadingZip(false)
+  }
+
+  const toggleSelection = (idx) => {
+    setSelectedRecords(prev => prev.includes(idx) ? prev.filter(x => x !== idx) : [...prev, idx])
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedRecords.length === filteredRecords.length) {
+      setSelectedRecords([])
+    } else {
+      setSelectedRecords(filteredRecords.map((_, i) => i))
+    }
   }
 
   // Filtrado de registros obtenidos desde la cámara
@@ -430,10 +475,22 @@ function App() {
                 />
               </div>
             </div>
-            <div className="filter-row" style={{ marginTop: '12px', justifyContent: 'space-between' }}>
+            <div className="filter-row" style={{ marginTop: '12px', gap: 8 }}>
               <button className="btn btn-accent" onClick={searchRecords} disabled={recordsLoading}>
                 {recordsLoading ? '⏳ Consultando sistema...' : '🔍 Buscar'}
               </button>
+              
+              <div style={{ flex: 1 }}></div>
+
+              <button 
+                className="btn btn-accent" 
+                onClick={downloadSelectedImages}
+                disabled={selectedRecords.length === 0 || downloadingZip}
+                style={{ background: selectedRecords.length ? 'var(--accent)' : 'var(--bg-input)' }}
+              >
+                {downloadingZip ? '⏳ Comprimiendo ZIP...' : `⬇️ Descargar Fotos (${selectedRecords.length})`}
+              </button>
+              
               <button 
                 className="btn btn-accent" 
                 onClick={() => exportCSV(filteredRecords, 'registros_camara')} 
@@ -447,6 +504,11 @@ function App() {
           
           <div className="stats-bar">
             <div className="stat-item">Resultados: <span className="stat-value">{filteredRecords.length}</span></div>
+            {filteredRecords.length > 0 && (
+              <div className="stat-item" style={{marginLeft: 16, cursor: 'pointer', color: 'var(--accent)'}} onClick={toggleSelectAll}>
+                {selectedRecords.length === filteredRecords.length ? '☑️ Deseleccionar Todos' : '✅ Seleccionar Todos'}
+              </div>
+            )}
             <div className="stat-item" style={{marginLeft: 'auto', fontSize: '11px'}}>
               Extraído directamente del almacenamiento interno
             </div>
@@ -458,10 +520,18 @@ function App() {
             <div className="events-container">
               {filteredRecords.map((rec, i) => {
                 const placaText = rec.PlateNumber || 'Desconocida'
+                const isSelected = selectedRecords.includes(i)
                 return (
-                  <div key={i} className="record-item">
+                  <div key={i} className="record-item" style={{ cursor: 'pointer', background: isSelected ? 'var(--dark-2)' : '' }} onClick={() => toggleSelection(i)}>
                     <div className="record-left">
-                      <div className="record-icon">📄</div>
+                      <div className="record-icon" style={{ padding: '0 8px' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={isSelected} 
+                          onChange={() => {}} 
+                          style={{ width: 18, height: 18, cursor: 'pointer' }}
+                        />
+                      </div>
                       <div>
                         {/* We use PlateNumber extraction from backend */}
                         <div className="plate-number" style={{ fontSize: 16 }}>{placaText}</div>
@@ -472,7 +542,7 @@ function App() {
                            <button 
                              className="btn btn-accent" 
                              style={{ padding: '4px 10px', fontSize: '11px', marginTop: '8px' }}
-                             onClick={() => viewFile(rec.FilePath)}
+                             onClick={(e) => { e.stopPropagation(); viewFile(rec.FilePath); }}
                            >
                              👁️ Vista Previa
                            </button>

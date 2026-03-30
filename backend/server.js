@@ -192,20 +192,84 @@ app.get('/api/records', async (req, res) => {
 // Proxy camera file/image
 app.get('/api/camera-file', async (req, res) => {
   try {
-    let filePath = req.query.path;
+    const filePath = req.query.path;
     if (!filePath) return res.status(400).json({ error: 'path required' });
     
-    // Convert path to proper Dahua download URI if it's an absolute path
+    // Fallback array for Dahua Image Download APIs
+    let uris = [ filePath ];
     if (filePath.startsWith('/') && !filePath.includes('cgi-bin')) {
-      filePath = `/cgi-bin/loadfile.cgi?action=download&file=${encodeURIComponent(filePath)}`;
+      const p = encodeURIComponent(filePath);
+      uris = [
+        `/cgi-bin/loadfile.cgi?action=download&file=${filePath}`,
+        `/cgi-bin/loadfile.cgi?action=download&file=${p}`,
+        `/cgi-bin/mediaFileFind.cgi?action=downloadFile&filepath=${filePath}`,
+        `/RPC_Loadfile${filePath}`
+      ];
     }
     
-    const resp = await cam(filePath);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    let resp = null;
+    let lastStatus = '';
+    for (const u of uris) {
+      const tempResp = await cam(u);
+      if (tempResp.ok && tempResp.headers.get('content-length') > 100) {
+         resp = tempResp;
+         break;
+      }
+      lastStatus = tempResp.status;
+    }
+    
+    if (!resp) throw new Error(`Status ${lastStatus}`);
+    
     const ct = resp.headers.get('content-type');
     if (ct) res.setHeader('Content-Type', ct);
     resp.body.pipe(res);
   } catch (err) { res.status(502).json({ error: err.message }); }
+});
+
+// ZIP Endpoint for multiple images
+const archiver = require('archiver');
+app.post('/api/download-images', express.json(), async (req, res) => {
+  try {
+    const { paths } = req.body;
+    if (!paths || !Array.isArray(paths)) return res.status(400).json({ error: 'No paths provided' });
+    
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="fotos_placas_${Date.now()}.zip"`);
+    
+    const archive = archiver('zip', { zlib: { level: 5 } });
+    archive.pipe(res);
+    archive.on('warning', err => { if (err.code !== 'ENOENT') console.error(err); });
+    archive.on('error', err => { console.error(err); });
+
+    for (let i = 0; i < paths.length; i++) {
+        const filePath = paths[i];
+        if (!filePath) continue;
+        const p = encodeURIComponent(filePath);
+        const uris = [
+          `/cgi-bin/loadfile.cgi?action=download&file=${filePath}`, 
+          `/cgi-bin/loadfile.cgi?action=download&file=${p}`,
+          `/cgi-bin/mediaFileFind.cgi?action=downloadFile&filepath=${filePath}`, 
+          `/RPC_Loadfile${filePath}`
+        ];
+        
+        let fileResp = null;
+        for (const u of uris) {
+           const tempResp = await cam(u);
+           if (tempResp.ok && tempResp.headers.get('content-length') > 100) {
+              fileResp = tempResp;
+              break;
+           }
+        }
+        
+        if (fileResp) {
+            const fileName = filePath.split('/').pop() || `imagen_${i}.jpg`;
+            archive.append(fileResp.body, { name: fileName });
+        }
+    }
+    archive.finalize();
+  } catch(err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
 });
 
 // PTZ control
