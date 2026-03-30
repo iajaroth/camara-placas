@@ -1,9 +1,6 @@
 services:
   backend:
     build: ./backend
-    container_name: camara-placas-backend
-    ports:
-      - "3001:3001"
     environment:
       - NODE_ENV=production
       - DAHUA_HOST=${DAHUA_HOST:-192.168.38.200}
@@ -17,9 +14,6 @@ services:
 
   frontend:
     build: ./frontend
-    container_name: camara-placas-frontend
-    ports:
-      - "8080:80"
     depends_on:
       - backend
     restart: unless-stopped
