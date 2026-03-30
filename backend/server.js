@@ -201,27 +201,58 @@ app.get('/api/camera-file', async (req, res) => {
       const p = encodeURIComponent(filePath);
       uris = [
         `/cgi-bin/loadfile.cgi?action=download&file=${filePath}`,
-        `/cgi-bin/loadfile.cgi?action=download&file=${p}`,
         `/cgi-bin/mediaFileFind.cgi?action=downloadFile&filepath=${filePath}`,
-        `/RPC_Loadfile${filePath}`
+        `/cgi-bin/RPC_Loadfile${filePath}`, 
+        `/RPC_Loadfile${filePath}`,
+        `/cgi-bin/loadfile.cgi?action=loadfile&class=Data&stream=${p}`
       ];
     }
     
     let resp = null;
     let lastStatus = '';
     for (const u of uris) {
-      const tempResp = await cam(u);
-      if (tempResp.ok && tempResp.headers.get('content-length') > 100) {
-         resp = tempResp;
-         break;
+      console.log(`[DOWNLOAD] Trying: ${u}`);
+      try {
+         const tempResp = await dahua.fetch(`${CAMERA_URL}${u}`, { method: 'GET', timeout: 5000 });
+         lastStatus = tempResp.status;
+         
+         if (tempResp.ok) {
+            const cl = tempResp.headers.get('content-length');
+            const ct = tempResp.headers.get('content-type') || '';
+            const isText = ct.includes('text') || ct.includes('json');
+            
+            // Si no tiene longitud, o tiene > 100 bytes, o claramente es imagen, lo damos por bueno
+            // Rechazamos solo si es un error escondido en 200 OK text de < 100 bytes
+            if (!isText || (cl && parseInt(cl) > 100)) {
+               resp = tempResp;
+               console.log(`[DOWNLOAD] SUCCESS with ${u}`);
+               break;
+            } else {
+               // Consumir para evitar leaks
+               await tempResp.text(); 
+            }
+         } else {
+            await tempResp.text(); // discard
+         }
+      } catch (e) {
+         console.log(`[DOWNLOAD] timeout o error con ${u}: ${e.message}`);
       }
-      lastStatus = tempResp.status;
     }
     
-    if (!resp) throw new Error(`Status ${lastStatus}`);
+    if (!resp) {
+       console.log(`[DOWNLOAD] ALL FAILED for ${filePath}`);
+       return res.status(502).json({ error: `Not found or camera rejected. (Last: ${lastStatus})` });
+    }
     
     const ct = resp.headers.get('content-type');
-    if (ct) res.setHeader('Content-Type', ct);
+    if (ct && !ct.includes('text')) {
+       res.setHeader('Content-Type', ct);
+    } else {
+       // Force a generic image fallback if Dahua didn't send one
+       res.setHeader('Content-Type', 'image/jpeg');
+    }
+    
+    res.setHeader('Cache-Control', 'public, max-age=86400');
     resp.body.pipe(res);
   } catch (err) { res.status(502).json({ error: err.message }); }
 });
