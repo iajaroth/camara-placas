@@ -1,4 +1,4 @@
-version: '3.8'
+version: '3'
 
 services:
   wireguard:
@@ -11,13 +11,7 @@ services:
       - net.ipv4.conf.all.src_valid_mark=1
     ports:
       - "51820:51820/udp"
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Costa_Rica
     volumes:
       - ./config:/config
       - /lib/modules:/lib/modules
     restart: unless-stopped
-    labels:
-      - "traefik.enable=false"
