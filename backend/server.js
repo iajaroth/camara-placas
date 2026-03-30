@@ -277,19 +277,31 @@ app.post('/api/download-images', express.json(), async (req, res) => {
         if (!filePath) continue;
         const p = encodeURIComponent(filePath);
         const uris = [
-          `/cgi-bin/loadfile.cgi?action=download&file=${filePath}`, 
-          `/cgi-bin/loadfile.cgi?action=download&file=${p}`,
-          `/cgi-bin/mediaFileFind.cgi?action=downloadFile&filepath=${filePath}`, 
-          `/RPC_Loadfile${filePath}`
+          `/cgi-bin/loadfile.cgi?action=download&file=${filePath}`,
+          `/cgi-bin/mediaFileFind.cgi?action=downloadFile&filepath=${filePath}`,
+          `/cgi-bin/RPC_Loadfile${filePath}`, 
+          `/RPC_Loadfile${filePath}`,
+          `/cgi-bin/loadfile.cgi?action=loadfile&class=Data&stream=${p}`
         ];
         
         let fileResp = null;
         for (const u of uris) {
-           const tempResp = await cam(u);
-           if (tempResp.ok && tempResp.headers.get('content-length') > 100) {
-              fileResp = tempResp;
-              break;
-           }
+           try {
+               const tempResp = await dahua.fetch(`${CAMERA_URL}${u}`, { method: 'GET', timeout: 5000 });
+               if (tempResp.ok) {
+                  const cl = tempResp.headers.get('content-length');
+                  const ct = tempResp.headers.get('content-type') || '';
+                  const isText = ct.includes('text') || ct.includes('json');
+                  if (!isText || (cl && parseInt(cl) > 100)) {
+                     fileResp = tempResp;
+                     break;
+                  } else {
+                     await tempResp.text();
+                  }
+               } else {
+                  await tempResp.text();
+               }
+           } catch(e) {}
         }
         
         if (fileResp) {
