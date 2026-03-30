@@ -341,13 +341,11 @@ function parseFileResults(text) {
     }
   }
   
-  // Post-process
+  // Post-process to fix FilePath and PlateNumber
   for (const r of records) {
-    // If we have an array of filepaths but missing a single standard FilePath property, set it
     if (!r.FilePath && r.FilePaths && r.FilePaths.length > 0) {
       r.FilePath = r.FilePaths[0];
     }
-    // Fallback Plate extraction from filenames
     if (!r.PlateNumber && r.FilePaths && r.FilePaths.length > 0) {
       for (const fp of r.FilePaths) {
         const fileBase = fp.split('/').pop() || '';
@@ -359,7 +357,36 @@ function parseFileResults(text) {
       }
     }
   }
-  return records;
+
+  // GROUP by StartTime + PlateNumber to merge Vehicle and Plate images
+  const grouped = [];
+  for (const r of records) {
+    if (!r.FilePath && (!r.FilePaths || r.FilePaths.length === 0)) continue;
+    
+    // Attempt to find existing group
+    const existing = grouped.find(g => 
+       g.StartTime === r.StartTime && 
+       ((g.PlateNumber && g.PlateNumber === r.PlateNumber) || (!g.PlateNumber && !r.PlateNumber))
+    );
+
+    if (existing) {
+       // Merge FilePaths
+       if (r.FilePaths) {
+           for (const fp of r.FilePaths) {
+               if (!existing.FilePaths.includes(fp)) {
+                   existing.FilePaths.push(fp);
+               }
+           }
+       } else if (r.FilePath && !existing.FilePaths.includes(r.FilePath)) {
+           existing.FilePaths.push(r.FilePath);
+       }
+    } else {
+       if (!r.FilePaths) r.FilePaths = r.FilePath ? [r.FilePath] : [];
+       grouped.push(r);
+    }
+  }
+  
+  return grouped;
 }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 

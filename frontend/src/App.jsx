@@ -266,27 +266,34 @@ function App() {
     if (!paths.length) return alert('No hay rutas válidas o imágenes en los registros seleccionados.')
     
     setDownloadingZip(true)
-    try {
-      const resp = await fetch(`${API}/download-images`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths })
-      })
-      if (!resp.ok) throw new Error('Falló la creación del ZIP en el servidor')
-      
-      const blob = await resp.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `placas_fotos_${Date.now()}.zip`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      alert('Error descargando el ZIP: ' + err.message)
+    let fails = 0;
+    
+    for (let i = 0; i < paths.length; i++) {
+        const p = paths[i];
+        try {
+            const url = `${API}/camera-file?path=${encodeURIComponent(p)}`;
+            const resp = await fetch(url);
+            if (!resp.ok) { fails++; continue; }
+            
+            const blob = await resp.blob();
+            const localUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = localUrl;
+            a.download = p.split('/').pop() || `foto_${Date.now()}.jpg`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(localUrl);
+            
+            // Pausa obligada para que el navegador no bloquee spam de descargas
+            await new Promise(r => setTimeout(r, 400));
+        } catch (err) {
+            fails++;
+        }
     }
-    setDownloadingZip(false)
+    
+    setDownloadingZip(false);
+    if (fails > 0) alert(`Atención: Falló la descarga de ${fails} fotos. Las demás se bajaron correctamente en formato JPG.`);
   }
 
   const toggleSelection = (idx) => {
